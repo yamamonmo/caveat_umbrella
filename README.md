@@ -41,9 +41,10 @@ source .venv/bin/activate
 # - opencv-python: OpenCV本体
 # - requests: API通信
 # - schedule: 定期実行
-# - simpleaudio: 音声再生
+# sounddevice: 再生用 (PortAudioラッパー)
+# soundfile: WAVバイナリの読み込み用
 # - numpy: 数値計算 (OpenCV依存)
-pip install opencv-python requests schedule simpleaudio numpy
+pip install opencv-python requests schedule sounddevice soundfile numpy
 
 ```
 

@@ -4,8 +4,8 @@ import requests
 import json
 import time
 import schedule
-import simpleaudio as sa
-import os
+import sounddevice as sd
+import soundfile as sf
 
 # ==========================================
 # ⚙️ 設定エリア (環境に合わせて変更してください)
