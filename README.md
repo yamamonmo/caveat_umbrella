@@ -20,16 +20,44 @@ Raspberry Pi 4 で動作する、天気連動型の生活支援AIシステムで
 
 ## 🚀 セットアップ手順 (Setup)
 
+# 仮想環境の作成
+
+```bash
+
+python3 -m venv .venv
+
+```
+# 仮想環境の有効化
+
+```bash
+
+source .venv/bin/activate
+
+```
+
+```bash
+
+# 必要なライブラリを一括インストール
+# - opencv-python: OpenCV本体
+# - requests: API通信
+# - schedule: 定期実行
+# - simpleaudio: 音声再生
+# - numpy: 数値計算 (OpenCV依存)
+pip install opencv-python requests schedule simpleaudio numpy
+
+```
+
 ### 1. ライブラリのインストール
 ターミナルを開き、必要なパッケージとPythonライブラリをインストールします。
 
 ```bash
+
 # システムパッケージ
 sudo apt update
-sudo apt install -y libatlas-base-dev libopencv-dev python3-opencv portaudio19-dev
+sudo apt install -y libopenblas-dev libopencv-dev portaudio19-dev python3-full
 
 # Pythonライブラリ
-pip3 install requests schedule simpleaudio opencv-python numpy
+pip install requests schedule simpleaudio opencv-python numpy
 ```
 
 ### 2. YOLO (画像認識モデル) のダウンロード
