@@ -44,6 +44,7 @@ core = None
 # ==========================================
 # 🔊 音声合成関数 (VOICEVOX Core)
 # ==========================================
+def init_voicevox_core():
     global core
     try:
         from voicevox_core.blocking import Synthesizer, Onnxruntime, OpenJtalk
