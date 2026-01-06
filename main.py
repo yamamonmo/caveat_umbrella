@@ -67,8 +67,10 @@ def init_voicevox_core():
             
         print("✅ VOICEVOX Core 準備完了")
         
-    except ImportError:
-        print("❌ voicevox_core がインストールされていません。")
+    except ImportError as e:
+        print(f"❌ voicevox_core が読み込めませんでした。詳細: {e}")
+        # import traceback
+        # traceback.print_exc()
         print("setup.sh を実行してセットアップを行ってください。")
         # 開発中のWindows等でライブラリがない場合のフォールバック（ログのみ）
         core = None
