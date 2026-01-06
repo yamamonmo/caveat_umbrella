@@ -47,6 +47,14 @@ core = None
 def init_voicevox_core():
     global core
     try:
+        from voicevox_core.blocking import Synthesizer
+        # from voicevox_core import AccelerationMode
+        
+        if not os.path.exists(OPEN_JTALK_DICT_DIR):
+            print(f"❌ 辞書ディレクトリが見つかりません: {OPEN_JTALK_DICT_DIR}")
+            print("setup.sh または setup_environment.py を実行してください。")
+            sys.exit(1)
+
         print("🔊 VOICEVOX Coreを初期化中...")
         
         # 0.16.3では AccelerationMode は型ヒント(Literal)の可能性があるため、文字列で指定する
