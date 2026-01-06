@@ -47,7 +47,8 @@ core = None
 def init_voicevox_core():
     global core
     try:
-        from voicevox_core import VoicevoxCore, AccelerationMode
+        from voicevox_core.blocking import Synthesizer
+        from voicevox_core import AccelerationMode
         
         if not os.path.exists(OPEN_JTALK_DICT_DIR):
             print(f"❌ 辞書ディレクトリが見つかりません: {OPEN_JTALK_DICT_DIR}")
@@ -56,12 +57,12 @@ def init_voicevox_core():
 
         print("🔊 VOICEVOX Coreを初期化中...")
         # AccelerationMode.AUTO はGPUがあれば使い、なければCPUを使う
-        core = VoicevoxCore(
+        core = Synthesizer(
             acceleration_mode=AccelerationMode.AUTO,
             open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR
         )
         
-        # モデル読み込み
+        # モデル読み込み (Synthesizerでも同様にLoadが必要)
         if not core.is_model_loaded(SPEAKER_ID):
             core.load_model(SPEAKER_ID)
             
