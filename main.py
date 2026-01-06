@@ -56,9 +56,9 @@ def init_voicevox_core():
             sys.exit(1)
 
         print("🔊 VOICEVOX Coreを初期化中...")
-        # AccelerationMode.AUTO はGPUがあれば使い、なければCPUを使う
+        # Raspberry PiなのでCPU固定で初期化する (0.16.3でAUTOが削除された可能性があるため)
         core = Synthesizer(
-            acceleration_mode=AccelerationMode.AUTO,
+            acceleration_mode=AccelerationMode.CPU,
             open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR
         )
         
