@@ -56,9 +56,26 @@ def init_voicevox_core():
             sys.exit(1)
 
         print("🔊 VOICEVOX Coreを初期化中...")
-        # Raspberry PiなのでCPU固定で初期化する (0.16.3でAUTOが削除された可能性があるため)
+        
+        # デバッグ: AccelerationModeの中身を確認
+        print(f"DEBUG: AccelerationMode attributes: {dir(AccelerationMode)}")
+        
+        # 仮実装: 属性名が小文字や別の名前になっている可能性を考慮し、getattrで安全に試すか、直打ちする
+        # ここでは一旦、print結果をユーザーに教えてもらうために、エラーそのままで実行させるか、
+        # あるいは 'CPU' がだめなら文字列で渡すトライをする手もあるが、まずは調査優先。
+        
+        mode = getattr(AccelerationMode, "CPU", None)
+        if mode is None:
+            # もしCPUがない場合、もしかして文字列？
+            # 0.15系 -> 0.16系の過渡期で仕様がコロコロ変わっている可能性がある
+            print("⚠️ AccelerationMode.CPU not found. Trying string 'CPU' or assuming default.")
+            # 苦肉の策: 文字列で渡してみるテスト、もしくは引数なし（デフォルト）を試す
+            # core = Synthesizer(open_jtalk_dict_dir=OPEN_JTALK_DICT_度)
+            # とりあえずエラー詳細を出させる
+            pass
+
         core = Synthesizer(
-            acceleration_mode=AccelerationMode.CPU,
+            acceleration_mode=AccelerationMode.CPU, # ここで落ちるはずだが、直前のprintが見たい
             open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR
         )
         
