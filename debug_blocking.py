@@ -3,18 +3,28 @@ try:
     import voicevox_core.blocking
     import inspect
     
-    print(f"Members: {dir(voicevox_core.blocking)}")
+    Ort = voicevox_core.blocking.Onnxruntime
+    print(f"Onnxruntime dir: {dir(Ort)}")
     
-    if hasattr(voicevox_core.blocking, "OpenJtalk"):
-        print(f"OpenJtalk sig: {inspect.signature(voicevox_core.blocking.OpenJtalk)}")
-    
-    if hasattr(voicevox_core.blocking, "Onnxruntime"):
-        print(f"Onnxruntime sig: {inspect.signature(voicevox_core.blocking.Onnxruntime)}")
+    # helper to print sig if callable
+    def print_sig(name, obj):
+        if callable(obj):
+            try:
+                print(f"{name} sig: {inspect.signature(obj)}")
+            except:
+                print(f"{name} is callable but signature failed")
+        else:
+            print(f"{name} is not callable")
 
-    # Also check top level just in case
-    import voicevox_core
-    if hasattr(voicevox_core, "Onnxruntime"):
-         print(f"voicevox_core.Onnxruntime sig: {inspect.signature(voicevox_core.Onnxruntime)}")
+    print_sig("Onnxruntime", Ort)
+    if hasattr(Ort, "load_once"):
+        print_sig("Onnxruntime.load_once", Ort.load_once)
+    if hasattr(Ort, "from_options"):
+         print_sig("Onnxruntime.from_options", Ort.from_options)
+
+    # Check OpenJtalk too just to be sure
+    Ojt = voicevox_core.blocking.OpenJtalk
+    print_sig("OpenJtalk", Ojt)
 
 except ImportError as e:
     print(f"ImportError: {e}")
