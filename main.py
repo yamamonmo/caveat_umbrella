@@ -44,11 +44,10 @@ core = None
 # ==========================================
 # 🔊 音声合成関数 (VOICEVOX Core)
 # ==========================================
-def init_voicevox_core():
     global core
     try:
-        from voicevox_core.blocking import Synthesizer
-        # from voicevox_core import AccelerationMode
+        from voicevox_core.blocking import Synthesizer, Onnxruntime, OpenJtalk
+        import glob
         
         if not os.path.exists(OPEN_JTALK_DICT_DIR):
             print(f"❌ 辞書ディレクトリが見つかりません: {OPEN_JTALK_DICT_DIR}")
@@ -57,10 +56,28 @@ def init_voicevox_core():
 
         print("🔊 VOICEVOX Coreを初期化中...")
         
+        # 1. Onnxruntimeの初期化
+        # カレントディレクトリにある libonnxruntime.so.* を探す
+        lib_candidates = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "libonnxruntime.so*"))
+        if not lib_candidates:
+            print("⚠️ libonnxruntime.so が見つかりません。setup.sh が正しく完了しているか確認してください。")
+            # 見つからない場合もとりあえず進めてみる（システムパスにあるかもしれないため）
+            lib_path = "libonnxruntime.so"
+        else:
+            lib_path = lib_candidates[0]
+            print(f"  libonnxruntime found: {os.path.basename(lib_path)}")
+
+        Onnxruntime.load_once(filename=lib_path)
+        
+        # 2. OpenJtalkの初期化
+        open_jtalk = OpenJtalk(open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR)
+        
+        # 3. Synthesizerの初期化
         # 0.16.3では AccelerationMode は型ヒント(Literal)の可能性があるため、文字列で指定する
         core = Synthesizer(
-            acceleration_mode="CPU",
-            open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR
+            onnxruntime=Onnxruntime.get(),
+            open_jtalk=open_jtalk,
+            acceleration_mode="CPU"
         )
         
         # モデル読み込み (Synthesizerでも同様にLoadが必要)
