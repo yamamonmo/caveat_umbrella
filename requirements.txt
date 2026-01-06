@@ -1,0 +1,8 @@
+opencv-python
+requests
+schedule
+sounddevice
+soundfile
+numpy
+python-dotenv
+# voicevox_core is installed manually/via setup script for RPi

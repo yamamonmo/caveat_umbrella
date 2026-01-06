@@ -1,113 +1,153 @@
-import cv2
-import numpy as np
-import requests
-import json
+import os
+import sys
 import time
+import json
+import requests
 import schedule
+import numpy as np
 import sounddevice as sd
 import soundfile as sf
+import io
+import cv2
+from dotenv import load_dotenv
+
+# 環境変数の読み込み
+load_dotenv()
 
 # ==========================================
-# ⚙️ 設定エリア (環境に合わせて変更してください)
+# ⚙️ 設定エリア
 # ==========================================
 
-# OpenWeatherMap API設定
-OPENWEATHER_API_KEY = "ここに取得したAPIキーを入力"
-CITY_NAME = "Tokyo,JP"
-WEATHER_ENDPOINT = "http://api.openweathermap.org/data/2.5/forecast"
+# 位置情報 (Open-Meteo用)
+LATITUDE = float(os.getenv("LATITUDE", "35.6895"))
+LONGITUDE = float(os.getenv("LONGITUDE", "139.6917"))
 
-# VOICEVOX設定
-VOICEVOX_URL = "http://127.0.0.1:50021"
-SPEAKER_ID = 3  # 3: ずんだもん(ノーマル), 1: ずんだもん(あまあま) など
+# 実行時刻
+CHECK_TIME = os.getenv("CHECK_TIME", "07:30")
 
-# YOLO (画像認識) 設定
-YOLO_WEIGHTS = "yolov3-tiny.weights"
-YOLO_CONFIG = "yolov3-tiny.cfg"
-COCO_NAMES = "coco.names"
+# 降水確率の閾値
+RAIN_THRESHOLD_PERCENT = float(os.getenv("RAIN_THRESHOLD_PERCENT", "0.3"))
 
-# 実行時刻設定
-CHECK_TIME = "07:30"
+# SPEAKER ID (ずんだもん=3)
+SPEAKER_ID = int(os.getenv("SPEAKER_ID", "3"))
 
-# 降水確率の閾値 (予報のリスト中にRain判定があるか、またはpopがこの値を超えたら雨とみなす)
-RAIN_THRESHOLD_PERCENT = 0.3  # 30%
+# モデル設定
+MODELS_DIR = "models"
+YOLO_WEIGHTS = os.path.join(MODELS_DIR, "yolov3-tiny.weights")
+YOLO_CONFIG = os.path.join(MODELS_DIR, "yolov3-tiny.cfg")
+COCO_NAMES = os.path.join(MODELS_DIR, "coco.names")
+OPEN_JTALK_DICT_DIR = os.path.join(MODELS_DIR, "open_jtalk_dic_utf_8-1.11")
+
+# VOICEVOX Core 初期化用グローバル変数
+core = None
 
 # ==========================================
-# 🔊 音声合成関数 (VOICEVOX)
+# 🔊 音声合成関数 (VOICEVOX Core)
 # ==========================================
+def init_voicevox_core():
+    global core
+    try:
+        from voicevox_core import VoicevoxCore, AccelerationMode
+        
+        if not os.path.exists(OPEN_JTALK_DICT_DIR):
+            print(f"❌ 辞書ディレクトリが見つかりません: {OPEN_JTALK_DICT_DIR}")
+            print("setup.sh または setup_environment.py を実行してください。")
+            sys.exit(1)
+
+        print("🔊 VOICEVOX Coreを初期化中...")
+        # AccelerationMode.AUTO はGPUがあれば使い、なければCPUを使う
+        core = VoicevoxCore(
+            acceleration_mode=AccelerationMode.AUTO,
+            open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR
+        )
+        
+        # モデル読み込み
+        if not core.is_model_loaded(SPEAKER_ID):
+            core.load_model(SPEAKER_ID)
+            
+        print("✅ VOICEVOX Core 準備完了")
+        
+    except ImportError:
+        print("❌ voicevox_core がインストールされていません。")
+        print("setup.sh を実行してセットアップを行ってください。")
+        # 開発中のWindows等でライブラリがない場合のフォールバック（ログのみ）
+        core = None
+
 def speak(text):
     """
-    VOICEVOX APIを使ってテキストを音声に変換し、再生する
+    VOICEVOX Coreを使ってテキストを音声に変換し、再生する
     """
     print(f"🗣️ ずんだもん: 「{text}」")
+    
+    if core is None:
+        print("⚠️ 音声合成エンジンが利用できないため、スキップします。")
+        return
+
     try:
-        # 1. 音声合成用のクエリを作成
-        query_payload = {"text": text, "speaker": SPEAKER_ID}
-        query_res = requests.post(
-            f"{VOICEVOX_URL}/audio_query", 
-            params=query_payload
-        )
-        query_res.raise_for_status()
-        query_data = query_res.json()
-
-        # 2. 音声を合成
-        synth_payload = {"speaker": SPEAKER_ID}
-        synth_res = requests.post(
-            f"{VOICEVOX_URL}/synthesis",
-            params=synth_payload,
-            json=query_data
-        )
-        synth_res.raise_for_status()
-
-        # 3. 再生 (simpleaudioを使用)
-        # バイナリデータからWaveObjectを作成して再生
-        wave_obj = sa.WaveObject.from_wave_read(synth_res.content)
-        play_obj = wave_obj.play()
-        play_obj.wait_done() # 再生終了まで待機
-
+        # 音声合成 (wavバイナリが返る)
+        wav_bytes = core.tts(text, SPEAKER_ID)
+        
+        # 再生
+        # バイト列をファイルライクオブジェクトにしてsoundfileで読み込む
+        data, samplerate = sf.read(io.BytesIO(wav_bytes))
+        sd.play(data, samplerate)
+        sd.wait()
+        
     except Exception as e:
         print(f"❌ 音声再生エラー: {e}")
-        print("VOICEVOX Engineが起動しているか確認してください。")
 
 # ==========================================
-# 🌦️ 天気予報関数 (OpenWeatherMap)
+# 🌦️ 天気予報関数 (Open-Meteo)
 # ==========================================
 def check_rain_forecast():
     """
-    今後24時間以内に雨が降る予報があるかチェックする
-    戻り値: True(雨予報あり), False(晴れ/曇り)
+    Open-Meteo APIを使用して、今後12時間以内に雨が降るかチェックする
     """
-    print("🌤️ 天気予報を確認中...")
+    print("🌤️ Open-Meteoで天気予報を確認中...")
+    
+    endpoint = "https://api.open-meteo.com/v1/forecast"
     params = {
-        "q": CITY_NAME,
-        "appid": OPENWEATHER_API_KEY,
-        "units": "metric",
-        "lang": "ja"
+        "latitude": LATITUDE,
+        "longitude": LONGITUDE,
+        "hourly": "precipitation_probability",
+        "timezone": "auto",
+        "forecast_days": 1
     }
     
     try:
-        response = requests.get(WEATHER_ENDPOINT, params=params)
+        response = requests.get(endpoint, params=params)
         response.raise_for_status()
         data = response.json()
         
-        # 直近の予報データを確認 (3時間ごと×8枠 = 24時間分)
-        forecasts = data.get("list", [])[:8]
+        hourly = data.get("hourly", {})
+        probs = hourly.get("precipitation_probability", [])
+        
+        # 現在時刻から12時間分をチェック
+        # (APIは0時から始まるリストを返すので、現在時刻のインデックスを取得する簡易実装)
+        current_hour = int(time.strftime("%H"))
+        # 24時間データのうち、現在時刻以降〜＋12時間
+        check_probs = probs[current_hour : current_hour + 12]
         
         will_rain = False
-        for f in forecasts:
-            weather_main = f["weather"][0]["main"]
-            pop = f.get("pop", 0) # 降水確率 (0.0 - 1.0)
-            
-            # 天気がRain/Drizzle/Thunderstorm、または降水確率が高い場合
-            if weather_main in ["Rain", "Drizzle", "Thunderstorm"] or pop >= RAIN_THRESHOLD_PERCENT:
-                will_rain = True
-                break
+        max_prob = 0
         
+        for p in check_probs:
+            # Noneが入る場合があるので0扱いにする
+            prob = p if p is not None else 0
+            if prob > max_prob:
+                max_prob = prob
+                
+            # 降水確率が閾値を超えたら雨判定 (閾値0.3 => 30%)
+            if prob >= (RAIN_THRESHOLD_PERCENT * 100):
+                will_rain = True
+        
+        print(f"☂️ 最大降水確率: {max_prob}% (判定: {'雨' if will_rain else '晴れ'})")
         return will_rain
-
+        
     except Exception as e:
         print(f"❌ 天気取得エラー: {e}")
         speak("天気予報の取得に失敗したのだ。")
-        return False # エラー時はとりあえずFalseにする
+        return False
 
 # ==========================================
 # 📷 画像認識関数 (YOLO + OpenCV)
@@ -115,64 +155,61 @@ def check_rain_forecast():
 def check_umbrella():
     """
     カメラを起動し、YOLOを使って傘(umbrella)があるかチェックする
-    戻り値: True(傘あり), False(傘なし)
     """
     print("📷 カメラを起動して傘を探しています...")
     
-    # YOLOモデルの読み込み
+    if not os.path.exists(YOLO_WEIGHTS) or not os.path.exists(YOLO_CONFIG):
+        print("❌ YOLOモデルファイルが見つかりません。")
+        speak("画像認識のモデルがないのだ。セットアップを確認してほしいのだ。")
+        return False
+
     try:
         net = cv2.dnn.readNet(YOLO_WEIGHTS, YOLO_CONFIG)
         with open(COCO_NAMES, "r") as f:
             classes = [line.strip() for line in f.readlines()]
-    except FileNotFoundError:
-        print("❌ YOLO関連ファイルが見つかりません。")
-        speak("画像認識の設定ファイルが見つからないのだ。")
+    except Exception as e:
+        print(f"❌ モデル読み込みエラー: {e}")
         return False
 
     layer_names = net.getLayerNames()
     try:
         output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
     except:
-        # OpenCVのバージョンによって挙動が違う場合のフォールバック
         output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 
-    # カメラ起動
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("❌ カメラが開けません")
-        speak("カメラが起動できないのだ。")
+        speak("カメラが起動できないのだ。接続を確認するのだ。")
         return False
 
     has_umbrella = False
+    check_frames = 15 # フレーム数を少し増やす
     
-    # 判定の精度を上げるため、数フレーム確認する
-    check_frames = 10 
-    
-    for _ in range(check_frames):
+    for i in range(check_frames):
         ret, frame = cap.read()
         if not ret:
             break
         
-        height, width, channels = frame.shape
-
-        # YOLOに入力するためのBlob作成
+        # YOLO入力処理
         blob = cv2.dnn.blobFromImage(frame, 0.00392, (320, 320), (0, 0, 0), True, crop=False)
         net.setInput(blob)
         outs = net.forward(output_layers)
 
-        # 検出結果の解析
         for out in outs:
             for detection in out:
                 scores = detection[5:]
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
                 
-                # 信頼度が0.5以上かつ、クラス名が umbrella の場合
                 if confidence > 0.5 and classes[class_id] == "umbrella":
                     has_umbrella = True
+                    print(f"☂️ 傘を検出しました！ (信頼度: {confidence:.2f})")
                     break
             if has_umbrella: break
         if has_umbrella: break
+        
+        time.sleep(0.1)
     
     cap.release()
     return has_umbrella
@@ -181,46 +218,43 @@ def check_umbrella():
 # 🧠 メインルーチン
 # ==========================================
 def morning_routine():
-    """
-    毎朝実行される一連の流れ
-    """
     print(f"\n⏰ {CHECK_TIME} になりました。ルーチンを開始します。")
     
-    # 1. 天気チェック
     is_rainy = check_rain_forecast()
     
     if not is_rainy:
-        # 晴れの場合
         speak("おはようございます。今日は雨の心配はなさそうなのだ。行ってらっしゃいなのだ！")
     else:
-        # 雨の場合
-        speak("おはようございます。今日は雨が降りそうなのだ。傘を持っているか確認するのだ。カメラに傘を見せてほしいのだ。")
+        speak("おはようございます。今日は雨が降りそうなのだ。傘を持っているか確認するのだ。")
+        # 準備待ち
+        time.sleep(2)
         
-        # ユーザーが準備する時間を少し待つ
-        time.sleep(3)
-        
-        # 2. 傘チェック
         has_umbrella = check_umbrella()
         
         if has_umbrella:
-            speak("確認できたのだ！ 準備万端でえらいのだ。気をつけて行ってらっしゃいなのだ！")
+            speak("確認できたのだ！ 傘を持っていてえらいのだ。気をつけて行ってらっしゃいなのだ！")
         else:
-            # 警告音（ブザー音などを鳴らしても良いが今回はセリフで強調）
-            speak("傘が見当たらないのだ！ 今日は雨だから、忘れずに傘を持っていくのだ！")
+            speak("大変なのだ！ 傘が見当たらないのだ！ 雨に濡れちゃうから、絶対に傘を持っていくのだ！")
 
 # ==========================================
 # 🚀 エントリーポイント
 # ==========================================
 if __name__ == "__main__":
-    print(f"🤖 ずんだもん生活支援AI 起動中...")
-    print(f"📅 毎日 {CHECK_TIME} に天気と傘のチェックを行います。")
+    print(f"🤖 ずんだもん生活支援AI (Dockerless Edition) 起動中...")
+    
+    # 1. 音声合成エンジンの初期化
+    init_voicevox_core()
+    
+    # 2. スケジュール登録
+    print(f"📅 毎日 {CHECK_TIME} にチェックを行います。")
+    schedule.every().day.at(CHECK_TIME).do(morning_routine)
+    
     print("Ctrl+C で終了します。")
 
-    # スケジュール登録
-    schedule.every().day.at(CHECK_TIME).do(morning_routine)
-
-    # テスト用: 今すぐ動作確認したい場合は以下のコメントアウトを外してください
-    # morning_routine()
+    # (デバッグ用) 起動時に引数 --test があれば即時実行
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        print("🧪 テストモード: 今すぐルーチンを実行します")
+        morning_routine()
 
     try:
         while True:
