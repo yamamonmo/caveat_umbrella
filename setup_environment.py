@@ -122,6 +122,57 @@ def setup_voicevox_core():
         print(f"  [Info] Current platform is {system} {arch}. Skipping auto-install of RPi wheel.")
         print("  If you are testing on Windows/Mac, please install voicevox_core manually if needed.")
 
+def setup_voicevox_libs():
+    """
+    Download and extract the required shared libraries (libonnxruntime, libvoicevox_core)
+    for Linux Aarch64, as they are missing from the wheel.
+    """
+    arch = platform.machine().lower()
+    if not ("aarch64" in arch or "arm64" in arch):
+        return
+
+    print("Checking VOICEVOX Core Shared Libraries...")
+    
+    # URL for the core libraries zip
+    # Using the same version as the wheel logic (0.15.3)
+    CORE_ZIP_URL = f"https://github.com/VOICEVOX/voicevox_core/releases/download/{VOICEVOX_CORE_VERSION}/voicevox_core-linux-aarch64-cpu-{VOICEVOX_CORE_VERSION}.zip"
+    
+    # Libraries we need to have in the root (or readable path)
+    needed_libs = ["libonnxruntime.so.1.13.1", "libvoicevox_core.so"]
+    
+    # Check if they exist
+    missing = [lib for lib in needed_libs if not os.path.exists(lib)]
+    if not missing:
+        print("  [Skip] Shared libraries already exist.")
+        return
+
+    print(f"  Downloading Core Libraries from {CORE_ZIP_URL}...")
+    zip_path = "voicevox_core_libs.zip"
+    download_file(CORE_ZIP_URL, zip_path)
+    
+    print("  Extracting shared libraries...")
+    try:
+        with zipfile.ZipFile(zip_path, "r") as z:
+            # The zip usually has a folder structure like "voicevox_core-linux-..."
+            # We search for the .so files inside
+            for file_info in z.infolist():
+                if file_info.filename.endswith(".so") or ".so." in file_info.filename:
+                    # We only want the specific libs we need
+                    base_name = os.path.basename(file_info.filename)
+                    if any(n in base_name for n in ["libonnxruntime", "libvoicevox_core"]):
+                        print(f"    Extracting {base_name}...")
+                        # Extract to current directory
+                        with z.open(file_info) as source, open(base_name, "wb") as target:
+                            shutil.copyfileobj(source, target)
+                            
+        print("  Done. (Note: You may need to run with LD_LIBRARY_PATH=. python3 main.py)")
+        
+    except Exception as e:
+        print(f"  [Error] Failed to extract libraries: {e}")
+    finally:
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+
 def main():
     if not os.path.exists(MODELS_DIR):
         os.makedirs(MODELS_DIR)
@@ -129,6 +180,7 @@ def main():
     setup_yolo()
     setup_open_jtalk()
     setup_voicevox_core()
+    setup_voicevox_libs()
 
 if __name__ == "__main__":
     main()
