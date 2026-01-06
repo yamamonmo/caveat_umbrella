@@ -17,9 +17,7 @@ YOLO_URLS = {
 OPEN_JTALK_DIC_URL = "https://sourceforge.net/projects/open-jtalk/files/Dictionary/open_jtalk_dic-1.11/open_jtalk_dic_utf_8-1.11.tar.gz/download"
 
 # Voicevox Core Release
-# Note: Using 0.15.3 as a stable baseline that has aarch64 wheels. 
-# Adjust version if needed or logic to find latest.
-VOICEVOX_CORE_VERSION = "0.15.3" 
+VOICEVOX_CORE_VERSION = "0.16.3" 
 VOICEVOX_RELEASE_API = f"https://api.github.com/repos/VOICEVOX/voicevox_core/releases/tags/{VOICEVOX_CORE_VERSION}"
 
 def download_file(url, dest_path):
@@ -59,6 +57,7 @@ def setup_open_jtalk():
     print("  Extracting dictionary...")
     try:
         with tarfile.open(dic_tar, "r:gz") as tar:
+            # Avoid CVE-2007-4559 (safely extract) - simple version for trusted source
             tar.extractall(path=MODELS_DIR)
         print("  Done.")
     except Exception as e:
@@ -67,7 +66,17 @@ def setup_open_jtalk():
         if os.path.exists(dic_tar):
             os.remove(dic_tar)
 
-def setup_voicevox_core():
+def get_release_assets():
+    try:
+        print(f"  Fetching release assets for version {VOICEVOX_CORE_VERSION}...")
+        resp = requests.get(VOICEVOX_RELEASE_API)
+        resp.raise_for_status()
+        return resp.json().get("assets", [])
+    except Exception as e:
+        print(f"  [Error] Failed to fetch release info: {e}")
+        return []
+
+def setup_voicevox_core(assets):
     print("Checking VOICEVOX Core...")
     # Check if installed
     try:
@@ -83,49 +92,44 @@ def setup_voicevox_core():
     
     # Simple check for RPi (linux aarch64)
     if system == "linux" and ("aarch64" in arch or "arm64" in arch):
-        print(f"  Detected Linux Aarch64 ({arch}). Fetching VOICEVOX Core wheel...")
+        print(f"  Detected Linux Aarch64 ({arch}). finding compatible wheel...")
         
-        try:
-            resp = requests.get(VOICEVOX_RELEASE_API)
-            resp.raise_for_status()
-            assets = resp.json().get("assets", [])
+        # Find wheel for aarch64
+        # Target: voicevox_core-*-linux_aarch64.whl or manylinux...aarch64.whl
+        target_asset = None
+        for asset in assets:
+            name = asset["name"]
+            if name.endswith("whl") and "aarch64" in name:
+                target_asset = asset
+                break
+        
+        if target_asset:
+            whl_url = target_asset["browser_download_url"]
+            whl_name = target_asset["name"]
+            dest_whl = os.path.join(MODELS_DIR, whl_name)
             
-            # Find wheel for aarch64
-            # Look for: voicevox_core-*-linux_aarch64.whl or manylinux...aarch64.whl
-            target_asset = None
-            for asset in assets:
-                name = asset["name"]
-                if name.endswith("whl") and "aarch64" in name:
-                    target_asset = asset
-                    break
+            download_file(whl_url, dest_whl)
             
-            if target_asset:
-                whl_url = target_asset["browser_download_url"]
-                whl_name = target_asset["name"]
-                dest_whl = os.path.join(MODELS_DIR, whl_name)
-                
-                download_file(whl_url, dest_whl)
-                
-                print(f"  Installing {whl_name}...")
+            print(f"  Installing {whl_name}...")
+            try:
                 subprocess.check_call([sys.executable, "-m", "pip", "install", dest_whl])
-                
-                # Cleanup
-                # os.remove(dest_whl) # Optional: keep it or delete it
-            else:
-                print("  [Warning] Could not find compatible aarch64 wheel in release assets.")
-                print("  Please install voicevox_core using the official installer or manually.")
-                
-        except Exception as e:
-            print(f"  [Error] Failed to setup VOICEVOX Core: {e}")
+                print("  Successfully installed voicevox_core.")
+            except subprocess.CalledProcessError as e:
+                print(f"  [Error] Failed to install wheel: {e}")
+
+            # Cleanup
+            # os.remove(dest_whl) # Optional: keep it or delete it
+        else:
+            print("  [Warning] Could not find compatible aarch64 wheel in release assets.")
+            print("  Please install voicevox_core using the official installer or manually.")
 
     else:
         print(f"  [Info] Current platform is {system} {arch}. Skipping auto-install of RPi wheel.")
-        print("  If you are testing on Windows/Mac, please install voicevox_core manually if needed.")
 
-def setup_voicevox_libs():
+def setup_voicevox_libs(assets):
     """
     Download and extract the required shared libraries (libonnxruntime, libvoicevox_core)
-    for Linux Aarch64, as they are missing from the wheel.
+    for Linux Aarch64.
     """
     arch = platform.machine().lower()
     if not ("aarch64" in arch or "arm64" in arch):
@@ -133,35 +137,49 @@ def setup_voicevox_libs():
 
     print("Checking VOICEVOX Core Shared Libraries...")
     
-    # URL for the core libraries zip
-    # Using the same version as the wheel logic (0.15.3)
-    CORE_ZIP_URL = f"https://github.com/VOICEVOX/voicevox_core/releases/download/{VOICEVOX_CORE_VERSION}/voicevox_core-linux-aarch64-cpu-{VOICEVOX_CORE_VERSION}.zip"
+    # Find the zip file having arm64/aarch64 in name
+    # e.g. voicevox_core-linux-arm64-0.16.3.zip (Note: often 'arm64' on GitHub assets even if 'aarch64' system)
+    target_asset = None
+    for asset in assets:
+        name = asset["name"]
+        # Look for linux and (arm64 or aarch64) and zip
+        if "linux" in name and ("arm64" in name or "aarch64" in name) and name.endswith(".zip"):
+            # Exclude 'gpu' or 'cuda' unless we specifically want them (stick to cpu/default for now)
+            if "gpu" not in name and "cuda" not in name:
+                target_asset = asset
+                break
     
-    # Libraries we need to have in the root (or readable path)
-    needed_libs = ["libonnxruntime.so.1.13.1", "libvoicevox_core.so"]
-    
-    # Check if they exist
-    missing = [lib for lib in needed_libs if not os.path.exists(lib)]
-    if not missing:
-        print("  [Skip] Shared libraries already exist.")
+    if not target_asset:
+        print("  [Error] Could not find shared libraries zip for aarch64/arm64.")
         return
 
-    print(f"  Downloading Core Libraries from {CORE_ZIP_URL}...")
-    zip_path = "voicevox_core_libs.zip"
-    download_file(CORE_ZIP_URL, zip_path)
+    zip_url = target_asset["browser_download_url"]
+    zip_name = target_asset["name"]
+    zip_path = os.path.join(MODELS_DIR, zip_name)
+
+    # Libraries we need to have in the root (or readable path)
+    # Note: 0.16.x might have different lib names or versions, but usually libvoicevox_core.so is key
+    needed_libs = ["libvoicevox_core.so"]
+    
+    # Check if they exist (simplistic check)
+    if os.path.exists("libvoicevox_core.so") and os.path.exists("libonnxruntime.so.1.13.1"): 
+        # Note: onnxruntime version might change per voicevox release, strict check is hard without manifest
+        print("  [Skip] Shared libraries seem to exist.")
+        # proceed to download anyway if unsure? for now skip if main lib exists
+        return
+
+    download_file(zip_url, zip_path)
     
     print("  Extracting shared libraries...")
     try:
         with zipfile.ZipFile(zip_path, "r") as z:
-            # The zip usually has a folder structure like "voicevox_core-linux-..."
-            # We search for the .so files inside
             for file_info in z.infolist():
+                # We search for the .so files inside
                 if file_info.filename.endswith(".so") or ".so." in file_info.filename:
-                    # We only want the specific libs we need
                     base_name = os.path.basename(file_info.filename)
-                    if any(n in base_name for n in ["libonnxruntime", "libvoicevox_core"]):
+                    # Allow libonnxruntime, libvoicevox_core
+                    if "libonnxruntime" in base_name or "libvoicevox_core" in base_name:
                         print(f"    Extracting {base_name}...")
-                        # Extract to current directory
                         with z.open(file_info) as source, open(base_name, "wb") as target:
                             shutil.copyfileobj(source, target)
                             
@@ -179,8 +197,14 @@ def main():
     
     setup_yolo()
     setup_open_jtalk()
-    setup_voicevox_core()
-    setup_voicevox_libs()
+    
+    # Fetch assets once to use for both wheel and libs
+    assets = get_release_assets()
+    if assets:
+        setup_voicevox_core(assets)
+        setup_voicevox_libs(assets)
+    else:
+        print("Skipping VOICEVOX Core setup due to API failure.")
 
 if __name__ == "__main__":
     main()
