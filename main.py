@@ -47,35 +47,11 @@ core = None
 def init_voicevox_core():
     global core
     try:
-        from voicevox_core.blocking import Synthesizer
-        from voicevox_core import AccelerationMode
-        
-        if not os.path.exists(OPEN_JTALK_DICT_DIR):
-            print(f"❌ 辞書ディレクトリが見つかりません: {OPEN_JTALK_DICT_DIR}")
-            print("setup.sh または setup_environment.py を実行してください。")
-            sys.exit(1)
-
         print("🔊 VOICEVOX Coreを初期化中...")
         
-        # デバッグ: AccelerationModeの中身を確認
-        print(f"DEBUG: AccelerationMode attributes: {dir(AccelerationMode)}")
-        
-        # 仮実装: 属性名が小文字や別の名前になっている可能性を考慮し、getattrで安全に試すか、直打ちする
-        # ここでは一旦、print結果をユーザーに教えてもらうために、エラーそのままで実行させるか、
-        # あるいは 'CPU' がだめなら文字列で渡すトライをする手もあるが、まずは調査優先。
-        
-        mode = getattr(AccelerationMode, "CPU", None)
-        if mode is None:
-            # もしCPUがない場合、もしかして文字列？
-            # 0.15系 -> 0.16系の過渡期で仕様がコロコロ変わっている可能性がある
-            print("⚠️ AccelerationMode.CPU not found. Trying string 'CPU' or assuming default.")
-            # 苦肉の策: 文字列で渡してみるテスト、もしくは引数なし（デフォルト）を試す
-            # core = Synthesizer(open_jtalk_dict_dir=OPEN_JTALK_DICT_度)
-            # とりあえずエラー詳細を出させる
-            pass
-
+        # 0.16.3では AccelerationMode は型ヒント(Literal)の可能性があるため、文字列で指定する
         core = Synthesizer(
-            acceleration_mode=AccelerationMode.CPU, # ここで落ちるはずだが、直前のprintが見たい
+            acceleration_mode="CPU",
             open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR
         )
         
