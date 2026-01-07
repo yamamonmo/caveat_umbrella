@@ -28,93 +28,47 @@ CHECK_TIME = os.getenv("CHECK_TIME", "07:30")
 # 降水確率の閾値
 RAIN_THRESHOLD_PERCENT = float(os.getenv("RAIN_THRESHOLD_PERCENT", "0.3"))
 
-# SPEAKER ID (ずんだもん=3)
-SPEAKER_ID = int(os.getenv("SPEAKER_ID", "3"))
-
 # モデル設定
 MODELS_DIR = "models"
 YOLO_WEIGHTS = os.path.join(MODELS_DIR, "yolov3-tiny.weights")
 YOLO_CONFIG = os.path.join(MODELS_DIR, "yolov3-tiny.cfg")
 COCO_NAMES = os.path.join(MODELS_DIR, "coco.names")
-OPEN_JTALK_DICT_DIR = os.path.join(MODELS_DIR, "open_jtalk_dic_utf_8-1.11")
 
-# VOICEVOX Core 初期化用グローバル変数
-core = None
+# 音声ファイル設定
+ASSETS_DIR = "assets"
+VOICE_FILES = {
+    "greeting_sunny": "greeting_sunny.wav",
+    "greeting_rainy": "greeting_rainy.wav",
+    "check_ok": "check_ok.wav",
+    "check_ng": "check_ng.wav",
+    "error_weather": "error_weather.wav",
+    "error_model": "error_model.wav",
+    "error_camera": "error_camera.wav"
+}
 
 # ==========================================
-# 🔊 音声合成関数 (VOICEVOX Core)
+# 🔊 音声再生関数 (WAV再生)
 # ==========================================
-def init_voicevox_core():
-    global core
-    try:
-        from voicevox_core.blocking import Synthesizer, Onnxruntime, OpenJtalk
-        import glob
-        
-        if not os.path.exists(OPEN_JTALK_DICT_DIR):
-            print(f"❌ 辞書ディレクトリが見つかりません: {OPEN_JTALK_DICT_DIR}")
-            print("setup.sh または setup_environment.py を実行してください。")
-            sys.exit(1)
-
-        print("🔊 VOICEVOX Coreを初期化中...")
-        
-        # 1. Onnxruntimeの初期化
-        # カレントディレクトリにある libonnxruntime.so.* を探す
-        lib_candidates = glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "libonnxruntime.so*"))
-        if not lib_candidates:
-            print("⚠️ libonnxruntime.so が見つかりません。setup.sh が正しく完了しているか確認してください。")
-            # 見つからない場合もとりあえず進めてみる（システムパスにあるかもしれないため）
-            lib_path = "libonnxruntime.so"
-        else:
-            lib_path = lib_candidates[0]
-            print(f"  libonnxruntime found: {os.path.basename(lib_path)}")
-
-        Onnxruntime.load_once(filename=lib_path)
-        
-        # 2. OpenJtalkの初期化
-        open_jtalk = OpenJtalk(open_jtalk_dict_dir=OPEN_JTALK_DICT_DIR)
-        
-        # 3. Synthesizerの初期化
-        # 0.16.3では AccelerationMode は型ヒント(Literal)の可能性があるため、文字列で指定する
-        core = Synthesizer(
-            onnxruntime=Onnxruntime.get(),
-            open_jtalk=open_jtalk,
-            acceleration_mode="CPU"
-        )
-        
-        # モデル読み込み (Synthesizerでも同様にLoadが必要)
-        if not core.is_model_loaded(SPEAKER_ID):
-            core.load_model(SPEAKER_ID)
-            
-        print("✅ VOICEVOX Core 準備完了")
-        
-    except ImportError as e:
-        print(f"❌ voicevox_core が読み込めませんでした。詳細: {e}")
-        # import traceback
-        # traceback.print_exc()
-        print("setup.sh を実行してセットアップを行ってください。")
-        # 開発中のWindows等でライブラリがない場合のフォールバック（ログのみ）
-        core = None
-
-def speak(text):
+def play_voice(key):
     """
-    VOICEVOX Coreを使ってテキストを音声に変換し、再生する
+    指定されたキーに対応するWAVファイルを再生する
     """
-    print(f"🗣️ ずんだもん: 「{text}」")
-    
-    if core is None:
-        print("⚠️ 音声合成エンジンが利用できないため、スキップします。")
+    filename = VOICE_FILES.get(key)
+    if not filename:
+        print(f"⚠️ 音声キーが見つかりません: {key}")
         return
 
+    filepath = os.path.join(ASSETS_DIR, filename)
+    if not os.path.exists(filepath):
+        print(f"❌ 音声ファイルが見つかりません: {filepath}")
+        return
+
+    print(f"� 再生中: {filename} ...")
+    
     try:
-        # 音声合成 (wavバイナリが返る)
-        wav_bytes = core.tts(text, SPEAKER_ID)
-        
-        # 再生
-        # バイト列をファイルライクオブジェクトにしてsoundfileで読み込む
-        data, samplerate = sf.read(io.BytesIO(wav_bytes))
+        data, samplerate = sf.read(filepath)
         sd.play(data, samplerate)
         sd.wait()
-        
     except Exception as e:
         print(f"❌ 音声再生エラー: {e}")
 
@@ -168,7 +122,7 @@ def check_rain_forecast():
         
     except Exception as e:
         print(f"❌ 天気取得エラー: {e}")
-        speak("天気予報の取得に失敗したのだ。")
+        play_voice("error_weather")
         return False
 
 # ==========================================
@@ -182,7 +136,7 @@ def check_umbrella():
     
     if not os.path.exists(YOLO_WEIGHTS) or not os.path.exists(YOLO_CONFIG):
         print("❌ YOLOモデルファイルが見つかりません。")
-        speak("画像認識のモデルがないのだ。セットアップを確認してほしいのだ。")
+        play_voice("error_model")
         return False
 
     try:
@@ -202,7 +156,7 @@ def check_umbrella():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("❌ カメラが開けません")
-        speak("カメラが起動できないのだ。接続を確認するのだ。")
+        play_voice("error_camera")
         return False
 
     has_umbrella = False
@@ -245,27 +199,27 @@ def morning_routine():
     is_rainy = check_rain_forecast()
     
     if not is_rainy:
-        speak("おはようございます。今日は雨の心配はなさそうなのだ。行ってらっしゃいなのだ！")
+        # 晴れの場合
+        play_voice("greeting_sunny")
     else:
-        speak("おはようございます。今日は雨が降りそうなのだ。傘を持っているか確認するのだ。")
+        # 雨の場合
+        play_voice("greeting_rainy")
+        
         # 準備待ち
         time.sleep(2)
         
         has_umbrella = check_umbrella()
         
         if has_umbrella:
-            speak("確認できたのだ！ 傘を持っていてえらいのだ。気をつけて行ってらっしゃいなのだ！")
+            play_voice("check_ok")
         else:
-            speak("大変なのだ！ 傘が見当たらないのだ！ 雨に濡れちゃうから、絶対に傘を持っていくのだ！")
+            play_voice("check_ng")
 
 # ==========================================
 # 🚀 エントリーポイント
 # ==========================================
 if __name__ == "__main__":
-    print(f"🤖 ずんだもん生活支援AI (Dockerless Edition) 起動中...")
-    
-    # 1. 音声合成エンジンの初期化
-    init_voicevox_core()
+    print(f"🤖 ずんだもん生活支援AI (WAV Playback Edition) 起動中...")
     
     # 2. スケジュール登録
     print(f"📅 毎日 {CHECK_TIME} にチェックを行います。")
